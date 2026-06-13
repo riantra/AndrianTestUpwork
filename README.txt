@@ -40,9 +40,6 @@
    * *Expected Result:* Once an account is deleted, all active sessions across all browsers and devices should be immediately terminated, and the user should be logged out and prevented from accessing any application features.
    * Start on 38:20 in video to 39:06
    
-
-You can add it as a separate issue:
-
 *8. Onboarding State Is Not Synchronized Across Multiple Browser Sessions*
 
   * The same account is logged in on two different browsers.
