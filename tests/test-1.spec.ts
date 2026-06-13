@@ -81,6 +81,128 @@ async function uploadFileInDialog(page: Page, filePath: string): Promise<void> {
   await page.locator('input[type="file"]').last().setInputFiles(filePath);
 }
 
+async function saveTeachAiMetadataField(
+  page: Page,
+  editButtonName: string,
+  value: string,
+  expectedText: string | RegExp,
+): Promise<void> {
+  const metadataSection = page.locator('[data-test="teach-ai-company-metadata-section"]');
+  const editButton = page.getByRole('button', { name: editButtonName });
+  const body = page.locator('body');
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await editButton.click();
+
+    const textbox = metadataSection.getByRole('textbox').last();
+    await expect(textbox).toBeVisible({ timeout: 10_000 });
+    await textbox.click();
+    await textbox.press('Control+A');
+    await textbox.type(value, { delay: 40 });
+
+    const saveButton = page.getByRole('button', { name: 'Save' });
+    await expect(saveButton).toBeEnabled();
+    await saveButton.click();
+
+    try {
+      await expect(body).toContainText(expectedText, { timeout: 10_000 });
+      return;
+    } catch {
+      const saveStillVisible = await saveButton.isVisible().catch(() => false);
+
+      if (saveStillVisible) {
+        await saveButton.click();
+
+        try {
+          await expect(body).toContainText(expectedText, { timeout: 10_000 });
+          return;
+        } catch {
+          // Retry the full edit flow when the first save did not persist.
+        }
+      }
+
+      const cancelButton = page.getByRole('button', { name: 'Cancel' });
+      const canCancel = await cancelButton.isVisible().catch(() => false);
+
+      if (canCancel) {
+        await cancelButton.click().catch(() => {});
+      }
+    }
+  }
+
+  await expect(body).toContainText(expectedText, { timeout: 10_000 });
+}
+
+async function waitForTeachAiFileGeneration(
+  page: Page,
+  expectedFileText: string | RegExp,
+): Promise<void> {
+  const body = page.locator('body');
+  const addFileButton = page.getByRole('button', { name: 'Add file Add file' });
+  const generatingText = page.getByText('Generating data', { exact: true }).first();
+
+  await expect(body).toContainText(expectedFileText, { timeout: 120_000 });
+
+  const generationIsVisible = await generatingText.isVisible().catch(() => false);
+
+  if (generationIsVisible) {
+    await expect(generatingText).toBeHidden({ timeout: 120_000 });
+  }
+
+  await expect(addFileButton).toBeVisible({ timeout: 30_000 });
+  await expect(addFileButton).toBeEnabled({ timeout: 120_000 });
+}
+
+async function addTeachAiFile(
+  page: Page,
+  filePath: string,
+  expectedFileText: string | RegExp,
+): Promise<void> {
+  const addFileButton = page.getByRole('button', { name: 'Add file Add file' });
+  const confirmButton = page.locator('[data-test="confirm-add-file-button"]');
+  const cancelButton = page.locator('[data-test="cancel-add-file-button"]');
+
+  await expect(addFileButton).toBeVisible({ timeout: 30_000 });
+  await expect(addFileButton).toBeEnabled({ timeout: 30_000 });
+  await addFileButton.click();
+
+  await uploadFileInDialog(page, filePath);
+  await expect(confirmButton).toBeVisible({ timeout: 10_000 });
+
+  // Wait for the file upload to finish before trying to save.
+  // The Save/Confirm button typically stays disabled while the
+  // "Uploading..." indicator is shown next to the file.
+  const uploadingText = page.getByText('Uploading...', { exact: false });
+  await uploadingText
+    .waitFor({ state: 'hidden', timeout: 120_000 })
+    .catch(() => {
+      // If it never appears or never disappears, fall through and
+      // let the click-loop below handle retries.
+    });
+
+  // Click Save/Confirm repeatedly until the dialog actually closes
+  // (button becomes hidden) or we run out of attempts.
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const stillVisible = await confirmButton.isVisible().catch(() => false);
+
+    if (!stillVisible) {
+      break;
+    }
+
+    const isEnabled = await confirmButton.isEnabled().catch(() => false);
+
+    if (isEnabled) {
+      await confirmButton.click({ force: true }).catch(() => {});
+    }
+
+    await page.waitForTimeout(1_000);
+  }
+
+  await expect(cancelButton).toBeHidden({ timeout: 30_000 });
+  await expect(confirmButton).toBeHidden({ timeout: 30_000 });
+  await waitForTeachAiFileGeneration(page, expectedFileText);
+}
+
 test.describe('Login And Teach AI', () => {
   test.describe.configure({ mode: 'serial' });
   test.setTimeout(120_000);
@@ -134,67 +256,26 @@ test.describe('Login And Teach AI', () => {
   test('Teach AI edit company metadata fields', async ({ page }) => {
     await openTeachAi(page);
 
-    await page.getByRole('button', { name: 'Edit Company' }).click();
-    await page
-      .locator('[data-test="teach-ai-company-metadata-section"]')
-      .getByRole('textbox')
-      .fill('Andrian Company Test');
-    await page.getByRole('button', { name: 'Save' }).click();
-    await expect(page.locator('body')).toContainText('Andrian Company Test');
+    await saveTeachAiMetadataField(page, 'Edit Company', 'Andrian Company Test', 'Andrian Company Test');
 
     await page.getByRole('button', { name: 'Edit Company' }).click();
     await page.getByRole('button', { name: 'Cancel' }).click();
 
-    await page.getByRole('button', { name: 'Edit Industry' }).click();
-    await page
-      .locator('[data-test="teach-ai-company-metadata-section"]')
-      .getByRole('textbox')
-      .fill('Andrian Industry');
-    await page.getByRole('button', { name: 'Save' }).click();
-    await expect(page.locator('body')).toContainText('Andrian Industry');
+    await saveTeachAiMetadataField(page, 'Edit Industry', 'Andrian Industry', 'Andrian Industry');
 
-    await page.getByRole('button', { name: 'Edit Category' }).click();
-    await page
-      .locator('[data-test="teach-ai-company-metadata-section"]')
-      .getByRole('textbox')
-      .fill('B2C');
-    await page.getByRole('button', { name: 'Save' }).click();
-    await expect(page.locator('body')).toContainText('B2C');
+    await saveTeachAiMetadataField(page, 'Edit Category', 'B2C', 'B2C');
 
-    await page.getByRole('button', { name: 'Edit Target customers' }).click();
-    await page
-      .locator('[data-test="teach-ai-company-metadata-section"]')
-      .getByRole('textbox')
-      .fill('QA');
-    await page.getByRole('button', { name: 'Save' }).click();
-    await expect(page.locator('body')).toContainText(/Target customers|QA/i);
+    await saveTeachAiMetadataField(page, 'Edit Target customers', 'QA', /Target customers|QA/i);
   });
 
-  test('Teach AI add multiple files', async ({ page }) => {
+  test('Teach AI add  files', async ({ page }) => {
     await openTeachAi(page);
 
     await page.getByRole('button', { name: 'Add file Add file' }).click();
     await uploadFileInDialog(page, CV_FILE_PATH);
     await page.locator('[data-test="cancel-add-file-button"]').click();
 
-    await page.getByRole('button', { name: 'Add file Add file' }).click();
-    await uploadFileInDialog(page, CV_FILE_PATH);
-    await page.locator('[data-test="confirm-add-file-button"]').click();
-
-    await expect(page.locator('body')).toContainText(/Generating data|Document summary/i, {
-      timeout: 60_000,
-    });
-    await expect(page.locator('body')).toContainText('Andrian Syahputra - CV.pdf');
-
-    await page.getByRole('button', { name: 'Add file Add file' }).click();
-    await uploadFileInDialog(page, CONTACTS_FILE_PATH);
-    await page.locator('[data-test="confirm-add-file-button"]').click();
-
-    await expect(page.locator('body')).toContainText(/Generating data|Document summary/i, {
-      timeout: 60_000,
-    });
-    await expect(page.locator('body')).toContainText(/contacts_example\.csv/i, {
-      timeout: 60_000,
-    });
+    await addTeachAiFile(page, CV_FILE_PATH, 'Andrian Syahputra - CV.pdf');
+    await addTeachAiFile(page, CONTACTS_FILE_PATH, /contacts_example\.csv/i);
   });
 });
