@@ -1,6 +1,7 @@
 1. **Loading Screen Stuck After Using Browser Back Button**
 
    * The application gets stuck on the loading screen when the user clicks the browser's Back button from the login page.
+   * Start on 1:20:28 in video to 3:01:16
 
 2. **Duplicate Notification When Using an Existing Email**
 
